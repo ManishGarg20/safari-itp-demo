@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Safari ITP Demo Probe</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f4f6f9; padding: 2rem; }
+    .card { background: #fff; border-radius: 10px; padding: 2rem; max-width: 640px; margin: 0 auto; box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+    h2 { margin-bottom: 1rem; color: #032d60; }
+    .row { margin: 0.75rem 0; font-size: 0.95rem; }
+    .label { font-weight: 600; color: #444; }
+    .val-true  { color: #2e7d32; font-weight: 700; }
+    .val-false { color: #c62828; font-weight: 700; }
+    pre { background: #f0f0f0; padding: 0.75rem 1rem; border-radius: 6px; font-size: 0.85rem; word-break: break-all; white-space: pre-wrap; margin-top: 0.4rem; }
+    hr { border: none; border-top: 1px solid #e0e0e0; margin: 1.5rem 0; }
+    .badge { display: inline-block; padding: 0.3rem 0.8rem; border-radius: 20px; font-size: 0.85rem; font-weight: 600; }
+    .badge-success { background: #e8f5e9; color: #2e7d32; }
+    .badge-fail    { background: #ffebee; color: #c62828; }
+    .note { font-size: 0.88rem; color: #666; margin-top: 1rem; line-height: 1.6; }
+    button { margin-top: 1.2rem; padding: 0.6rem 1.4rem; background: #0176d3; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 0.95rem; }
+    button:hover { background: #0154a0; }
+    .step { background: #e8f0fe; border-left: 4px solid #0176d3; padding: 1rem 1.2rem; border-radius: 0 6px 6px 0; margin: 1rem 0; }
+  </style>
+</head>
+<body>
+<div class="card" id="root"></div>
+
+<script>
+  const COOKIE_NAME = 'demo_auth';
+  const SOURCE_ID   = 'safari-itp-demo';
+
+  function getCookie(name) {
+    return document.cookie.split(';').some(c => c.trim().startsWith(name + '='));
+  }
+
+  function detectBrowser() {
+    const ua = navigator.userAgent;
+    if (/Safari/.test(ua) && !/Chrome/.test(ua) && !/Chromium/.test(ua)) return 'Safari';
+    if (/Chrome/.test(ua) || /Chromium/.test(ua)) return 'Chrome / Chromium';
+    if (/Firefox/.test(ua)) return 'Firefox';
+    return 'Other';
+  }
+
+  const inIframe = (() => {
+    try { return window.self !== window.top; } catch(e) { return true; }
+  })();
+
+  const browser = detectBrowser();
+
+  if (inIframe) {
+    const allCookies  = document.cookie;
+    const hasAuth     = getCookie(COOKIE_NAME);
+
+    // Post result back to parent Salesforce LWC
+    window.parent.postMessage({
+      source: SOURCE_ID,
+      authenticated: hasAuth,
+      cookiesVisible: allCookies || '(none)',
+      browser: browser
+    }, '*');
+
+    document.getElementById('root').innerHTML = `
+      <h2>Auth Probe &mdash; Iframe Mode</h2>
+      <div class="row">
+        <span class="label">Authenticated:</span>
+        <span class="${hasAuth ? 'val-true' : 'val-false'}">&nbsp;${hasAuth ? 'YES ✓' : 'NO ✗'}</span>
+        &nbsp;<span class="badge ${hasAuth ? 'badge-success' : 'badge-fail'}">${hasAuth ? 'Cookie visible' : 'Cookie blocked'}</span>
+      </div>
+      <div class="row">
+        <span class="label">Browser:</span> ${browser}
+      </div>
+      <div class="row">
+        <span class="label">All cookies visible to this iframe:</span>
+        <pre>${allCookies || '(none — Safari ITP has blocked all cross-site cookies)'}</pre>
+      </div>
+      <p class="note">
+        ${hasAuth
+          ? 'The cross-site cookie is readable in this iframe. This browser allows third-party cookies (e.g. Chrome).'
+          : 'Safari\'s Intelligent Tracking Prevention (ITP) has blocked the session cookie set on a direct visit. This is the same reason ServiceNow appears unauthenticated in Safari — it is a browser-level restriction, not a ServiceNow issue.'}
+      </p>
+    `;
+  } else {
+    // Direct visit — set the demo cookie
+    const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toUTCString();
+    document.cookie = `${COOKIE_NAME}=true; path=/; expires=${expiry}; SameSite=None; Secure`;
+    const cookieSet = getCookie(COOKIE_NAME);
+
+    document.getElementById('root').innerHTML = `
+      <h2>Safari ITP Demo &mdash; Direct Visit</h2>
+      <div class="step">
+        <strong>Step 1 (this page):</strong> Set auth cookie on direct visit.<br>
+        Cookie set: <span class="${cookieSet ? 'val-true' : 'val-false'}">${cookieSet ? 'YES ✓' : 'FAILED (page must be served over HTTPS)'}</span>
+      </div>
+      <div class="row"><span class="label">Current cookies:</span><pre>${document.cookie || '(empty)'}</pre></div>
+      <div class="step">
+        <strong>Step 2:</strong> Go back to Salesforce and open the <strong>iframeSafariDemo</strong> Lightning component.<br><br>
+        &bull; <strong>Chrome</strong> &rarr; Authenticated: <span class="val-true">YES ✓</span> (cookie visible in iframe)<br>
+        &bull; <strong>Safari</strong> &rarr; Authenticated: <span class="val-false">NO ✗</span> (ITP blocks cross-site cookie)
+      </div>
+      <p class="note">
+        This proves that Safari's ITP blocks cross-site iframe cookies for <em>any</em> platform &mdash; not just ServiceNow.
+        The same result will occur with Google, Microsoft, Slack, or any other third-party domain loaded inside a Salesforce iframe.
+      </p>
+      <button onclick="location.reload()">Re-check Cookie</button>
+    `;
+  }
+</script>
+</body>
+</html>
