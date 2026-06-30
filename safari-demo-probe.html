@@ -5,32 +5,33 @@
   <title>Safari ITP Demo Probe</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f4f6f9; padding: 1rem; font-size: 13px; }
-    .card { background: #fff; border-radius: 8px; padding: 1rem; box-shadow: 0 1px 6px rgba(0,0,0,0.1); }
-    h3 { color: #032d60; margin-bottom: 0.5rem; font-size: 14px; }
-    .row { margin: 0.3rem 0; }
-    .val-true  { color: #2e7d32; font-weight: 700; }
-    .val-false { color: #c62828; font-weight: 700; }
-    .log { background: #1e1e1e; color: #d4d4d4; padding: 0.5rem; border-radius: 4px; font-size: 11px; font-family: monospace; margin-top: 0.5rem; white-space: pre-wrap; word-break: break-all; }
-    .step { background: #e8f0fe; border-left: 3px solid #0176d3; padding: 0.75rem 1rem; border-radius: 0 4px 4px 0; margin: 0.75rem 0; }
-    button { margin-top: 0.75rem; padding: 0.4rem 1rem; background: #0176d3; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f4f6f9; padding: 0.75rem; font-size: 12px; }
+    .card { background: #fff; border-radius: 6px; padding: 0.75rem; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    h3 { color: #032d60; margin-bottom: 0.4rem; font-size: 13px; }
+    .row { margin: 0.25rem 0; }
+    .ok  { color: #2e7d32; font-weight: 700; }
+    .err { color: #c62828; font-weight: 700; }
+    .log { background: #1e1e1e; color: #d4d4d4; padding: 0.4rem 0.6rem; border-radius: 3px; font-size: 10px; font-family: monospace; margin-top: 0.4rem; white-space: pre-wrap; word-break: break-all; max-height: 140px; overflow-y: auto; }
+    .step { background: #e8f0fe; border-left: 3px solid #0176d3; padding: 0.5rem 0.75rem; margin: 0.5rem 0; }
+    button { margin-top: 0.5rem; padding: 0.35rem 0.8rem; background: #0176d3; color: #fff; border: none; border-radius: 3px; cursor: pointer; font-size: 11px; }
   </style>
 </head>
 <body>
-<div class="card" id="root"><p>Loading...</p></div>
+<div class="card" id="root"><p>Loading probe...</p></div>
 
 <script>
   const COOKIE_NAME = 'demo_auth';
   const SOURCE_ID   = 'safari-itp-demo';
-  const log         = [];
+  const probeLog    = [];
+
+  function ts() { return new Date().toISOString().substring(11, 23); }
 
   function addLog(msg) {
-    const ts = new Date().toISOString().substr(11, 12);
-    const line = `[${ts}] ${msg}`;
-    log.push(line);
+    const line = `[${ts()}] ${msg}`;
+    probeLog.push(line);
     console.log('[safari-probe]', line);
     const el = document.getElementById('probe-log');
-    if (el) el.textContent = log.join('\n');
+    if (el) { el.textContent = probeLog.join('\n'); el.scrollTop = el.scrollHeight; }
   }
 
   function getCookie(name) {
@@ -40,66 +41,49 @@
   function detectBrowser() {
     const ua = navigator.userAgent;
     if (/Safari/.test(ua) && !/Chrome/.test(ua)) return 'Safari';
-    if (/Chrome/.test(ua) || /Chromium/.test(ua)) return 'Chrome/Chromium';
+    if (/Chrome/.test(ua)) return 'Chrome';
     return 'Other';
   }
 
-  // Try to post to a window target and log the result
-  function tryPost(target, targetName, payload) {
+  function tryPostTo(target, label, payload) {
     try {
       target.postMessage(payload, '*');
-      addLog(`postMessage → ${targetName}: OK`);
+      addLog(`postMessage → ${label}: sent OK`);
+      return true;
     } catch (e) {
-      addLog(`postMessage → ${targetName}: FAILED — ${e.message}`);
+      addLog(`postMessage → ${label}: FAILED — ${e.message}`);
+      return false;
     }
   }
 
-  // Send message to all possible parent windows
-  function broadcastToParents(payload) {
-    addLog('Broadcasting postMessage to all parent frames...');
+  function sendAuthResult(payload) {
+    addLog('--- Sending auth result ---');
+    // Try all possible parent windows
+    const targets = [];
+    try { if (window.parent && window.parent !== window) targets.push([window.parent, 'window.parent']); } catch(e) {}
+    try { if (window.top && window.top !== window) targets.push([window.top, 'window.top']); } catch(e) {}
+    try { if (window.parent && window.parent.parent && window.parent.parent !== window.parent) targets.push([window.parent.parent, 'window.parent.parent']); } catch(e) {}
 
-    // window.parent — direct parent frame
-    if (window.parent && window.parent !== window) {
-      tryPost(window.parent, 'window.parent', payload);
-    } else {
-      addLog('window.parent === window (we are top — not in iframe?)');
+    if (targets.length === 0) {
+      addLog('WARNING: No parent frames detected — this page thinks it is the top window');
     }
-
-    // window.top — top-most frame
-    if (window.top && window.top !== window && window.top !== window.parent) {
-      tryPost(window.top, 'window.top', payload);
-    } else if (window.top && window.top !== window) {
-      addLog('window.top === window.parent (no intermediate frames)');
-    }
-
-    // Walk up the chain (in case of multiple nested frames)
-    try {
-      let current = window.parent;
-      let depth = 1;
-      while (current && current !== current.parent && depth < 5) {
-        tryPost(current.parent, `window.parent(x${depth + 1})`, payload);
-        current = current.parent;
-        depth++;
-      }
-    } catch(e) {
-      addLog(`Frame walk stopped: ${e.message}`);
-    }
+    targets.forEach(([t, label]) => tryPostTo(t, label, payload));
   }
 
-  const inIframe = (() => {
-    try { return window.self !== window.top; } catch(e) { return true; }
-  })();
+  // Detect if running in iframe
+  let inIframe = false;
+  try { inIframe = window.self !== window.top; } catch(e) { inIframe = true; }
 
-  const browser     = detectBrowser();
-  const allCookies  = document.cookie;
-  const hasAuth     = getCookie(COOKIE_NAME);
+  const browser    = detectBrowser();
+  const allCookies = document.cookie;
+  const hasAuth    = getCookie(COOKIE_NAME);
 
-  addLog(`Page loaded. inIframe=${inIframe}, browser=${browser}`);
-  addLog(`Cookies: "${allCookies || '(none)'}"`);
-  addLog(`hasAuth cookie: ${hasAuth}`);
+  addLog(`Probe started. inIframe=${inIframe} browser=${browser}`);
+  addLog(`document.cookie="${allCookies || '(empty)'}"`);
+  addLog(`hasAuth=${hasAuth}`);
 
   if (inIframe) {
-    // ── IFRAME MODE: post auth result back and keep retrying ──────────────
+    // ── IFRAME MODE ──────────────────────────────────────────────────────────
 
     const payload = {
       source: SOURCE_ID,
@@ -108,58 +92,63 @@
       browser: browser
     };
 
-    // Initial send
-    broadcastToParents(payload);
-
-    // Retry every 3 seconds in case the LWC listener wasn't ready
-    let retries = 0;
-    const interval = setInterval(() => {
-      retries++;
-      addLog(`Retry #${retries} — re-broadcasting postMessage`);
-      broadcastToParents(payload);
-      if (retries >= 5) {
-        clearInterval(interval);
-        addLog('Max retries reached. If LWC still shows no message, the Salesforce window listener cannot receive cross-origin postMessages.');
+    // Listen for ping from LWC parent — respond immediately when pinged
+    window.addEventListener('message', function(event) {
+      addLog(`Received message from origin="${event.origin}" type="${event.data && event.data.type}"`);
+      if (event.data && event.data.type === 'ping') {
+        addLog('PING received from LWC parent! Sending auth response...');
+        sendAuthResult(payload);
       }
+    });
+
+    // Also send immediately without waiting for ping
+    addLog('Sending auth result immediately (no-ping path)...');
+    sendAuthResult(payload);
+
+    // And retry every 3s (in case LWC listener wasn't ready)
+    let retries = 0;
+    const iv = setInterval(() => {
+      retries++;
+      addLog(`Retry #${retries}`);
+      sendAuthResult(payload);
+      if (retries >= 5) { clearInterval(iv); addLog('Done retrying.'); }
     }, 3000);
 
+    // Render the iframe UI
     document.getElementById('root').innerHTML = `
-      <h3>Probe — Iframe Mode</h3>
-      <div class="row">Authenticated: <span class="${hasAuth ? 'val-true' : 'val-false'}">${hasAuth ? 'YES ✓' : 'NO ✗'}</span></div>
-      <div class="row">Browser: <strong>${browser}</strong></div>
-      <div class="row">Cookies: <code>${allCookies || '(none)'}</code></div>
-      <div class="row">PostMessage log:</div>
+      <h3>Probe (iframe mode)</h3>
+      <div class="row">Authenticated: <span class="${hasAuth ? 'ok' : 'err'}">${hasAuth ? 'YES ✓' : 'NO ✗'}</span></div>
+      <div class="row">Browser: <b>${browser}</b></div>
+      <div class="row">Cookies: <code style="font-size:10px">${allCookies || '(none)'}</code></div>
+      <div class="row">inIframe: <b>${inIframe}</b></div>
       <div class="log" id="probe-log"></div>
     `;
-    // Re-attach log element after innerHTML reset
-    log.forEach(l => {}); // keep existing log entries
+    // Restore log into newly set element
     const logEl = document.getElementById('probe-log');
-    if (logEl) logEl.textContent = log.join('\n');
+    if (logEl) logEl.textContent = probeLog.join('\n');
 
   } else {
-    // ── DIRECT VISIT MODE: set the cookie ──────────────────────────────────
+    // ── DIRECT VISIT MODE ────────────────────────────────────────────────────
 
-    const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toUTCString();
+    const expiry = new Date(Date.now() + 86400000).toUTCString();
     try {
       document.cookie = `${COOKIE_NAME}=true; path=/; expires=${expiry}; SameSite=None; Secure`;
-      addLog('Cookie set attempt done');
-    } catch(e) {
-      addLog(`Cookie set failed: ${e.message}`);
-    }
+    } catch(e) { addLog(`Cookie error: ${e.message}`); }
+
     const cookieSet = getCookie(COOKIE_NAME);
-    addLog(`Cookie set result: ${cookieSet}`);
+    addLog(`Direct visit — cookie set result: ${cookieSet}`);
 
     document.getElementById('root').innerHTML = `
-      <h3>Safari ITP Demo &mdash; Direct Visit</h3>
+      <h3>Safari ITP Demo — Direct Visit</h3>
       <div class="step">
-        <strong>Step 1:</strong> Cookie set: <span class="${cookieSet ? 'val-true' : 'val-false'}">${cookieSet ? 'YES ✓' : 'FAILED (needs HTTPS)'}</span><br>
-        Current cookies: <code>${document.cookie || '(empty)'}</code>
+        <b>Step 1:</b> Cookie set: <span class="${cookieSet ? 'ok' : 'err'}">${cookieSet ? 'YES ✓' : 'FAILED (needs HTTPS)'}</span><br>
+        Cookies now: <code>${document.cookie || '(empty)'}</code>
       </div>
       <div class="step">
-        <strong>Step 2:</strong> Go back to Salesforce → open <strong>iframeSafariDemo</strong> component → click <em>Check Again</em>.<br><br>
-        Chrome → <span class="val-true">YES ✓</span> &nbsp; Safari → <span class="val-false">NO ✗</span>
+        <b>Step 2:</b> Go back to Salesforce → open <b>iframeSafariDemo</b> component → click <em>Check Again</em>.<br>
+        Chrome → <span class="ok">YES ✓</span> &nbsp; Safari → <span class="err">NO ✗</span>
       </div>
-      <div class="log" id="probe-log">${log.join('\n')}</div>
+      <div class="log" id="probe-log">${probeLog.join('\n')}</div>
       <button onclick="location.reload()">Re-check Cookie</button>
     `;
   }
